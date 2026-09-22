@@ -67,6 +67,8 @@ Melodic step sequencer, all in `315b705`. Before this, the sequencer rewrote the
 
 ## Planned
 
+Details, and the decisions these are waiting on, are in [PLANS.md](PLANS.md).
+
 - **Phase 2:** edit only the notes a change touches, using Live 11/12's note API (`get_notes_extended`, `add_new_notes`, `apply_note_modifications`, `remove_notes_by_id`). Notes the grid doesn't own are left alone, and Chance, velocity range, release velocity and MPE are kept.
 - **Phase 3:** Python 3.11 and dead-code cleanup, and separating the melodic sequencer's held-button combos from the drum sequencer's.
 - **Optional:** follow Live 12's global key and scale (`song.root_note`, `song.scale_name`), so the scale is saved with the set.
