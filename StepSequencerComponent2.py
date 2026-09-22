@@ -13,6 +13,9 @@ STEPSEQ_MODE_NOTES_OCTAVES = 2
 STEPSEQ_MODE_NOTES_VELOCITIES = 3
 STEPSEQ_MODE_NOTES_LENGTHS = 4
 
+# number of steps the note editor can hold (8 bars at 1/16)
+NUMBER_OF_STEPS = 128
+
 LONG_BUTTON_PRESS = 1.0
 
 # TODO :
@@ -98,11 +101,10 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		self._clip = None
 
 	def _init_data(self):
-		pages = 128
-		self._notes_pitches = [0] * (7 * pages)
-		self._notes_velocities = [4] * pages
-		self._notes_octaves = [2] * pages
-		self._notes_lengths = [3] * pages
+		self._notes_pitches = [0] * (7 * NUMBER_OF_STEPS)
+		self._notes_velocities = [4] * NUMBER_OF_STEPS
+		self._notes_octaves = [2] * NUMBER_OF_STEPS
+		self._notes_lengths = [3] * NUMBER_OF_STEPS
 
 	def set_mode(self, mode):
 		self._mode = mode
@@ -112,6 +114,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 	def set_clip(self, clip):
 		if self._clip != clip:
 			self._init_data()
+			self._note_cache = None
 			self._clip = clip
 
 	def set_note_cache(self, note_cache):
@@ -131,10 +134,14 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		return self._quantization
 
 	def set_quantization(self, quantization):
+		self._quantization = quantization
+
+	def stretch_to_quantization(self, quantization):
+		# keep the same steps at the new step size: stretches or compresses the clip
 		old_quantize = self._quantization
 		self._quantization = quantization
-		# update loop point
 		if self._clip != None and old_quantize != self._quantization:
+			# update loop point
 			self._loop_start = self._clip.loop_start * self._quantization / old_quantize
 			self._loop_end = self._clip.loop_end * self._quantization / old_quantize
 			if self._loop_start >= self._clip.loop_end:
@@ -147,8 +154,8 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				self._clip.loop_end = self._loop_end
 				self._clip.start_marker = self._loop_start
 				self._clip.end_marker = self._loop_end
-		# update clip notes
-		self._update_clip_notes()
+			# update clip notes
+			self._update_clip_notes()
 
 	def set_diatonic(self, diatonic):
 		self._diatonic = diatonic
@@ -172,7 +179,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 		for i in range(len(self._notes_pitches)):
 			self._notes_pitches[i] = 0
 
-		first_note = [True] * 128
+		first_note = [True] * NUMBER_OF_STEPS
 
 		for note in self._note_cache:
 			note_position = note[1]
@@ -181,6 +188,9 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 			note_velocity = note[3]
 			note_muted = note[4]
 			i = int(note_position / self._quantization)
+			if i < 0 or i >= NUMBER_OF_STEPS:
+				# outside of the steps the editor can hold
+				continue
 
 			if not note_muted:
 				if first_note[i]:
@@ -198,7 +208,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 
 					# note and octave
 					found = False
-					for j in range(max(7, len(self._key_indexes))):
+					for j in range(min(7, len(self._key_indexes))):
 						for octave in range(7):
 							if note_key == self._key_indexes[j] + 12 * (octave - 2) and not found:
 								found = True
@@ -207,7 +217,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				elif not self._is_monophonic:
 					# note
 					found = False
-					for j in range(max(7, len(self._key_indexes))):
+					for j in range(min(7, len(self._key_indexes))):
 						if note_key == self._key_indexes[j] + 12 * (self._notes_octaves[i] - 2) and not found:
 							found = True
 							self._notes_pitches[i * 7 + j] = 1
@@ -221,7 +231,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					if self._notes_pitches[x * 7 + note_index] == 1:
 						time = x * self._quantization
 						velocity = self._velocity_map[self._notes_velocities[x]]
-						length = self._length_map[self._notes_lengths[x]] * int(self._quantization / 4.0)
+						length = self._length_map[self._notes_lengths[x]] * self._quantization / 4.0
 						pitch = self._key_indexes[note_index] + 12 * (self._notes_octaves[x] - 2)
 						if(pitch >= 0 and pitch < 128 and velocity >= 0 and velocity < 128 and length >= 0):
 							note_cache.append([pitch, time, length, velocity, False])
@@ -362,7 +372,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 					self._grid_back_buffer[play_x_position][6] = metronome_color
 
 					# playing notes
-					if self._mode == STEPSEQ_MODE_NOTES:
+					if self._mode == STEPSEQ_MODE_NOTES and 0 <= play_position < NUMBER_OF_STEPS:
 						for y in range(7):
 							if self._notes_pitches[play_position * 7 + 6 - y] == 1:
 								if page == self._page:
@@ -384,18 +394,22 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 						
 			self._force_update = False
 
+	def _edit_range(self):  # steps affected by shifted edits and randomise
+		start = int(self._clip.loop_start / self._quantization)
+		end = int(self._clip.loop_end / self._quantization)
+		if (self._page + 1) * 8 > end or self._page * 8 < start:
+			# current page is outside of running loop.
+			# only update this page.
+			start = self._page * 8
+			end = (self._page + 1) * 8
+		return max(start, 0), min(end, NUMBER_OF_STEPS)
+
 	def _matrix_value(self, value, x, y, is_momentary):  # matrix buttons listener
 		if self.is_enabled() and self._matrix!=None:
 			if self._clip == None:
 				self._step_sequencer.create_clip()
 			else:
-				start = int(self._clip.loop_start / self._quantization)
-				end = int(self._clip.loop_end / self._quantization)
-				if (self._page + 1) * 8 > end or self._page * 8 < start:
-					# current page is outside of running loop.
-					# only update this page.
-					start = self._page * 8
-					end = (self._page + 1) * 8
+				start, end = self._edit_range()
 
 				if ((value != 0) or (not is_momentary)) and y < 7:
 					if self._mode == STEPSEQ_MODE_NOTES:
@@ -491,13 +505,7 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				self._random_button.turn_on()
 
 	def _randomise(self):
-		start = int(self._clip.loop_start / self._quantization)
-		end = int(self._clip.loop_end / self._quantization)
-		if (self._page + 1) * 8 > end or self._page * 8 < start:
-			# current page is outside of running loop.
-			# only update this page.
-			start = self._page * 8
-			end = (self._page + 1) * 8
+		start, end = self._edit_range()
 
 		for x in range(start, end):
 			if self._mode == STEPSEQ_MODE_NOTES:
@@ -552,7 +560,6 @@ class MelodicNoteEditorComponent(ControlSurfaceComponent):
 				self._is_notes_pitches_shifted = False
 				if time.time() - self._last_notes_pitches_button_press < 0.500:
 					self._is_monophonic = not self._is_monophonic
-					self._update_clip_notes()
 					self._step_sequencer._update_OSD()
 				else:
 					self.set_mode(STEPSEQ_MODE_NOTES)
@@ -685,7 +692,10 @@ class StepSequencerComponent2(StepSequencerComponent):
 		super(StepSequencerComponent2, self).__init__(control_surface)
 		self._new_clip_pages = 1
 		self._name = "melodic step sequencer"
-		
+		# start with the rows the scale editor shows, not the note editor's chromatic defaults
+		self._note_selector.set_scale(self._scale_component.notes, self._scale_component._key)
+		self._note_selector.set_selected_note(self._scale_component._octave * 12 + self._scale_component._key)
+
 	
 	def _delegate_matrix(self):
 		if self._matrix!=None:
@@ -740,6 +750,11 @@ class StepSequencerComponent2(StepSequencerComponent):
 	def _update_drum_group_device(self):
 		# no drum rack mode for me. i am a melodic step seq.
 		self._drum_group_device = None
+
+	def set_quantization(self, quantization):
+		# only called when the quantization button is pressed
+		self._note_editor.stretch_to_quantization(quantization)
+		super(StepSequencerComponent2, self).set_quantization(quantization)
 
 	def _update_OSD(self):
 		if self._osd != None:

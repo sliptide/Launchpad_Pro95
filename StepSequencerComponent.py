@@ -713,7 +713,7 @@ class StepSequencerComponent(CompoundComponent):
 		self._diatonic_scale = []
 		# setup
 		self._number_of_lines_per_note = 1
-		self._quantization_index = 1
+		self._quantization_index = 2
 		self._quantization = QUANTIZATION_MAP[self._quantization_index]
 		self._set_loop_selector()
 		self._set_note_editor()
@@ -721,7 +721,8 @@ class StepSequencerComponent(CompoundComponent):
 		self._set_track_controller()
 		self._set_scale_component()
 		self._set_lock_function()
-		
+		self._note_editor.set_quantization(self._quantization)
+
 		self.set_enabled(False)
 		
 		# TODO: maybe clean this... this should be done on enable.
@@ -974,6 +975,8 @@ class StepSequencerComponent(CompoundComponent):
 			CompoundComponent.set_enabled(self, enabled)
 			if self._clip != None and self._is_locked:
 				self._control_surface.show_message("stepseq : clip '"+str(self._clip.name)+"'")
+			# always reload notes when coming back
+			self._note_cache = None
 			self._on_notes_changed()
 			self._update_OSD()
 
@@ -1036,7 +1039,7 @@ class StepSequencerComponent(CompoundComponent):
 					keys[i] = self._note_selector._root_note + self._note_selector._offset + i
 			else:
 				for i in range(8):
-					keys[i] = self._note_selector._root_note + self._note_selector._scale[(i + idx) % self._note_selector._scale_length] + ((i + idx) / self._note_selector._scale_length) * 12
+					keys[i] = self._note_selector._root_note + self._note_selector._scale[(i + idx) % self._note_selector._scale_length] + ((i + idx) // self._note_selector._scale_length) * 12
 					key_is_root_note[i] = (keys[i] + 12) % 12 == self._note_selector._key
 					key_is_in_scale[i] = True
 		else:
@@ -1261,7 +1264,8 @@ class StepSequencerComponent(CompoundComponent):
 		self._note_editor.set_playhead(None)
 		self._note_selector.set_playhead(None)
 		self._loop_selector.set_playhead(None)
-		# reload notes
+		# reload notes, even if they look unchanged: set_clip() may have reset the note editor
+		self._note_cache = None
 		self._on_notes_changed()
 
 	def _on_notes_changed(self):  # trigger by callback on clip or via _clip_changed.
@@ -1482,10 +1486,10 @@ class StepSequencerComponent(CompoundComponent):
 			self._quantization_button = button
 			if (self._quantization_button != None):
 				assert isinstance(button, ButtonElement)
-				self._quantization_index = 2
-				self.set_quantization(QUANTIZATION_MAP[self._quantization_index])
+				# keep the current quantization: buttons are re-assigned every time the mode is entered
 				self._last_quantize_button_press = time.time()
 				self._quantization_button.add_value_listener(self._quantization_button_value)
+				self._update_quantization_button()
 
 	#@quantization_button.pressed
 	def _quantization_button_value(self, value):
@@ -1610,6 +1614,9 @@ class StepSequencerComponent(CompoundComponent):
 		if self.song().view.highlighted_clip_slot != None:
 			clip_slot = self.song().view.highlighted_clip_slot
 			if not clip_slot.has_clip:
+				if not clip_slot.canonical_parent.has_midi_input:
+					self._control_surface.show_message("stepseq : select a MIDI track to create a clip")
+					return
 				if self._mode == STEPSEQ_MODE_NORMAL:
 					clip_slot.create_clip(QUANTIZATION_MAP[self._quantization_index] * 8 * 4)
 				else:
